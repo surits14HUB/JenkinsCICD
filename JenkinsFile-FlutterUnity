@@ -1,0 +1,202 @@
+pipeline
+{
+    agent any
+    environment
+    {
+        //Main Constants
+        APP_NAME = "*******App"
+        LC_ALL = 'en_US.UTF-8'
+        LANG    = 'en_US.UTF-8'
+        LANGUAGE = 'en_US.UTF-8'
+
+        //APP Build Constants
+        ANDROID_BUILD_DIR = 'build/app/outputs/flutter-apk'
+        XCODE_BUILD_DIR = 'ios'
+        ARCHIVE_BUILD_DIR = 'ios/Archive'
+        IPA_BUILD_DIR = 'ios/IPA'
+        SCHEME = "Runner"
+        SCHEME_WORKSPACE = "xcworkspace"
+        // SCHEME_TYPE = "-project"
+        SCHEME_TYPE = "-workspace"
+        SCHEME_PROJECT = "xcodeproj"
+        SDK="iphoneos"
+        RELEASE_CONFIG = "Release"
+        SDK_VERSION = "13.0"
+        APP_BUNDLE_ID = "com.*******.*******App"
+        DEV_TEAM = credentials('*******DevTeam')
+        PROV_PROFILE = "*******App_AdHoc"
+        SIGN_ID = credentials('*******Distribution')
+
+        // //Testapp.io Constants
+        release = 'both' //android //ios
+        release_notes = "Onboarding, Landing page and Product listing UI and API implementation"
+        notify = true
+        api_token = credentials('*******App-staging-ta-token')
+        app_id = credentials('*******App-stating-ta-app-id')
+    }
+    stages
+    {
+        stage('Build Preprocessing')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "/Users/*****/Library/flutter/bin/flutter clean"
+                        sh "/Users/*****/Library/flutter/bin/flutter pub get"
+                    }
+                    catch (e)
+                    {
+                        echo "Build Preprocessing ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Android Build')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "/Users/*******/Library/flutter/bin/flutter build apk"
+                        sh "mv ${ANDROID_BUILD_DIR}/app-release.apk ${ANDROID_BUILD_DIR}/${APP_NAME}.apk"
+                    }
+                    catch (e)
+                    {
+                        echo "Android Build ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Workspace Build')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "sh podbuild.sh"
+                    }
+                    catch (e)
+                    {
+                        echo "Workspace Build ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Xcode Clean')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/${SCHEME}.${SCHEME_WORKSPACE} -scheme ${SCHEME} -sdk ${SDK} -configuration ${RELEASE_CONFIG} clean"
+                    }
+                    catch (e)
+                    {
+                        echo "Xcode Clean ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Xcode Build')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/${SCHEME}.${SCHEME_WORKSPACE} -scheme ${SCHEME} -sdk ${SDK} -allowProvisioningUpdates -configuration ${RELEASE_CONFIG} ENABLE_BITCODE=NO IPHONEOS_DEPLOYMENT_TARGET=${SDK_VERSION} PRODUCT_BUNDLE_IDENTIFIER=${APP_BUNDLE_ID} CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=${DEV_TEAM} PROVISIONING_PROFILE_SPECIFIER=${PROV_PROFILE} CODE_SIGN_IDENTITY=\"${SIGN_ID}\""
+                    }
+                    catch (e)
+                    {
+                        echo "Xcode Build ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Xcode Archive')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "rm -rf ${ARCHIVE_BUILD_DIR}"
+                        sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/${SCHEME}.${SCHEME_WORKSPACE} -scheme ${SCHEME} -sdk ${SDK} -allowProvisioningUpdates -configuration ${RELEASE_CONFIG} ENABLE_BITCODE=NO IPHONEOS_DEPLOYMENT_TARGET=${SDK_VERSION} PRODUCT_BUNDLE_IDENTIFIER=${APP_BUNDLE_ID} CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=${DEV_TEAM} PROVISIONING_PROFILE_SPECIFIER=${PROV_PROFILE} CODE_SIGN_IDENTITY=\"${SIGN_ID}\" archive -archivePath ${env.WORKSPACE}/${ARCHIVE_BUILD_DIR}/${APP_NAME}.xcarchive clean"
+                    }
+                    catch (e)
+                    {
+                        echo "Xcode Archive ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Archive Export')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        sh "rm -rf ${IPA_BUILD_DIR}"
+                        sh "/usr/bin/xcodebuild -exportArchive -archivePath ${env.WORKSPACE}/${ARCHIVE_BUILD_DIR}/${APP_NAME}.xcarchive -exportPath ${env.WORKSPACE}/${IPA_BUILD_DIR}/ -exportOptionsPlist ${env.WORKSPACE}/exportOptions.plist"
+                        sh "mv ${IPA_BUILD_DIR}/triveni_ar_app.ipa ${IPA_BUILD_DIR}/${APP_NAME}.ipa"
+                    }
+                    catch (e)
+                    {
+                        echo "Archive Export ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+        stage('Test Portal Upload')
+        {
+            steps{
+                script{
+                    try
+                    {
+                        // Install ta-cli
+                        sh '''
+                            export INSTALL_DIR=$WORKSPACE
+                            if [ ! -f $INSTALL_DIR/ta-cli ]
+                            then
+                                curl -Ls https://github.com/testappio/cli/releases/latest/download/install | bash
+                            fi
+                        '''
+
+                        // do the job now
+                        sh "./ta-cli publish --api_token=$api_token --app_id=$app_id --release=$release --apk=${env.Workspace}/${ANDROID_BUILD_DIR}/${APP_NAME}.apk --ipa=${env.Workspace}/${IPA_BUILD_DIR}/${APP_NAME}.ipa --release_notes=\"$release_notes\" --notify=$notify"
+                    }
+                    catch (e)
+                    {
+                        echo "Test Portal Upload ERROR - ${e}"
+                        //error keyword - stop compiler
+                        error "failed"
+                    }
+                }
+            }
+        }
+    }
+    post
+    {
+        success
+        {
+            echo "Build Sucess"
+        }
+        failure
+        {
+            echo "Build Failed"
+        }
+    }
+}

@@ -1,0 +1,215 @@
+pipeline
+{
+  agent any
+  environment{
+
+    //SONAR CONSTANTS
+    SONAR_TOKEN = credentials('SonarToken')
+    SONAR_URL_LOCAL = "\"http://localhost:9000\""
+    SONAR_HOME = tool 'SonarScanner MsBuild';
+    MONO_HOME = '/Library/Frameworks/Mono.framework/Versions/Current/Commands/'
+
+    //UNITY CONSTANTS
+    UNITY_HOME = '/Applications/Unity/Hub/Editor/2022.3.9f1/Unity.app/Contents/MacOS/Unity'
+    ANDROID_BUILD_METHOD = 'CICD.BuildActions.AndroidRelease'
+    ANDROID_BUILD_DIR = 'Builds/Android'
+    IOS_BUILD_METHOD = 'CICD.BuildActions.iOSRelease'
+    IOS_BUILD_DIR = 'Builds/iOS'
+    XCODE_BUILD_DIR = 'Builds/iOS/Xcode'
+    ARCHIVE_BUILD_DIR = 'Builds/iOS/Archive'
+    SCHEME_TYPE = "-project"
+    SCHEME = "Unity-iPhone"
+    SDK="iphoneos"
+    RELEASE_CONFIG = "Release"
+    APP_BUNDLE_ID = "com.*******.*******App"
+    DEV_TEAM = credentials('*******DevTeam')
+    PROV_PROFILE = "*******App_AdHoc"
+    SIGN_ID = credentials('*******Distribution')
+
+    //TEST APP IO CONSTANTS
+    release = 'both' //android //ios
+    release_notes = "Sample release notes"
+    notify = true
+    api_token = credentials('*******App-staging-ta-token')
+    app_id = credentials('*******App-stating-ta-app-id')
+  }
+  
+  stages
+  {
+    stage('GitLab'){
+      steps{
+        git branch: 'development', url: 'https://gitlab.com/sureshkumark/jenkinsunity.git'
+        echo "GitLab check out from development will be done here"
+      }
+    }
+    stage('SonarQube Analysis') {
+      steps{
+        // echo SONAR_TOKEN
+        // echo SONAR_URL_LOCAL
+        echo SONAR_HOME
+        // echo env.WORKSPACE
+        
+        // sh "${MONO_HOME}mono ${SONAR_HOME}/SonarScanner.MSBuild.exe begin /k:\"JenkinsUnity\" /d:sonar.host.url=${SONAR_URL_LOCAL} /d:sonar.login=\"${SONAR_TOKEN}\""
+        // sh "${MONO_HOME}msbuild JenkinsUnity-GL.sln /t:rebuild"
+        // sh "${MONO_HOME}mono ${SONAR_HOME}/SonarScanner.MSBuild.exe end /d:sonar.login=\"${SONAR_TOKEN}\""
+      }
+    }
+    stage('Unity Android Build'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            echo UNITY_HOME
+            echo ANDROID_BUILD_METHOD
+            echo ANDROID_BUILD_DIR
+
+            echo "${env.WORKSPACE}"
+            sh "rm -rf ${ANDROID_BUILD_DIR}"
+            sh "${UNITY_HOME} -quit -batchmode -projectPath . -executeMethod ${ANDROID_BUILD_METHOD} -nographics -stackTraceLogType Full --silent-crashes"
+          }
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Unity Xcode Build'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            echo UNITY_HOME
+            echo IOS_BUILD_METHOD
+            sh "rm -rf ${IOS_BUILD_DIR}"
+            sh "${UNITY_HOME} -quit -batchmode -projectPath . -executeMethod ${IOS_BUILD_METHOD} -nographics -stackTraceLogType Full --silent-crashes"
+          }
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Xcode Clean Build Folder'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            echo 'Xcode Clean Build Folder Started'
+            sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/Unity-iPhone.xcodeproj -scheme ${SCHEME} -sdk ${SDK} -configuration ${RELEASE_CONFIG} clean"
+            echo 'Xcode Clean Build Folder Completed'
+          }
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Xcode Build'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            // https://github.com/microsoft/azure-pipelines-tasks/issues/12263 -> Add a suffix to specific which target will be manually signed and letting the other targets automatically signed as default
+            echo 'Xcode Build Started'
+            sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/Unity-iPhone.xcodeproj -scheme ${SCHEME} -sdk ${SDK} -allowProvisioningUpdates -configuration ${RELEASE_CONFIG} ENABLE_BITCODE=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 PRODUCT_BUNDLE_IDENTIFIER=${APP_BUNDLE_ID} CODE_SIGN_STYLE=Manual DEVELOPMENT_DEV_TEAM=${DEV_TEAM} PROVISIONING_PROFILE_SPECIFIER=${PROV_PROFILE} CODE_SIGN_IDENTITY=\"${SIGN_ID}\""
+            echo 'Xcode Build Completed'
+          }
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Xcode Archive'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            echo 'Xcode Archive Started'
+            sh "rm -rf ${ARCHIVE_BUILD_DIR}"
+            sh "/usr/bin/xcodebuild ${SCHEME_TYPE} ${env.WORKSPACE}/${XCODE_BUILD_DIR}/Unity-iPhone.xcodeproj -scheme ${SCHEME} -sdk ${SDK} -allowProvisioningUpdates -configuration ${RELEASE_CONFIG} ENABLE_BITCODE=NO IPHONEOS_DEPLOYMENT_TARGET=13.0 PRODUCT_BUNDLE_IDENTIFIER=${APP_BUNDLE_ID} CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=${DEV_TEAM} PROVISIONING_PROFILE_SPECIFIER=${PROV_PROFILE} CODE_SIGN_IDENTITY=\"${SIGN_ID}\" archive -archivePath ${env.WORKSPACE}/${ARCHIVE_BUILD_DIR}/${APP_NAME}.xcarchive clean"
+            echo 'Xcode Archive Completed'
+          } 
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Xcode ipa file Exporting'){
+      steps
+      {
+        script
+        {
+          try
+          {
+            echo 'Xcode ipa file Exporting Started'
+            sh "/usr/bin/xcodebuild -exportArchive -archivePath ${env.WORKSPACE}/${ARCHIVE_BUILD_DIR}/${env.JOB_NAME}.xcarchive -exportPath ${env.WORKSPACE}/${IOS_BUILD_DIR}/ -exportOptionsPlist ${env.WORKSPACE}/exportOptions.plist"
+            echo 'Xcode ipa file Exporting Completed'
+          } 
+          catch (e)
+          {
+            echo 'failed'
+            //error keyword - stop compiler
+            error "failed"
+          }
+        }
+      }
+    }
+    stage('Test App Uploading'){
+      steps{
+
+        echo "Test App Files upload started"
+
+        // Install ta-cli
+        sh '''
+            export INSTALL_DIR=$WORKSPACE
+            if [ ! -f $INSTALL_DIR/ta-cli ]
+            then
+                curl -Ls https://github.com/testappio/cli/releases/latest/download/install | bash
+            fi
+        '''
+
+        // do the job now
+        sh "./ta-cli publish --api_token=$api_token --app_id=$app_id --release=$release --apk=${env.Workspace}/${ANDROID_BUILD_DIR}/${app_name}.apk --ipa=${env.Workspace}/${IOS_BUILD_DIR}/${app_name}.ipa --release_notes=$release_notes --notify=$notify"
+      }
+    }
+  }
+
+  post
+  {
+    success
+    {
+      echo "Build Sucess"
+    }
+    failure
+    {
+      echo "Build Failed"
+    }
+  }
+}
